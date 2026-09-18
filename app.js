@@ -2,74 +2,746 @@
   const C = window.ATENDIX_CONFIG || {};
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => [...document.querySelectorAll(s)];
-  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const money = (v) => Number(v || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
-  const today = () => new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
-  const monthKey = () => { const d=new Date(); return {year:Number(new Intl.DateTimeFormat('en',{timeZone:'America/Sao_Paulo',year:'numeric'}).format(d)),month:Number(new Intl.DateTimeFormat('en',{timeZone:'America/Sao_Paulo',month:'numeric'}).format(d))}; };
-  const ready = /^https:\/\/[^\s]+\.supabase\.co$/.test(C.SUPABASE_URL || '') && !!C.SUPABASE_PUBLISHABLE_KEY && !String(C.SUPABASE_PUBLISHABLE_KEY).includes('COLE_AQUI');
-  const sb = ready ? window.supabase.createClient(C.SUPABASE_URL,C.SUPABASE_PUBLISHABLE_KEY,{auth:{flowType:'pkce',detectSessionInUrl:true,persistSession:true,autoRefreshToken:true}}) : null;
-  const S={user:null,business:null,profile:null,membership:null,role:null};
-  let signup=false;
-  const menus=[['dashboard','Dashboard'],['agenda','Agenda'],['clientes','Clientes'],['servicos','Serviços'],['profissionais','Profissionais'],['financeiro','Financeiro'],['metas','Metas'],['relatorios','Relatórios'],['historico','Histórico'],['configuracoes','Configurações']];
-  function msg(text,type=''){ const el=$('#configWarn'); if(el){el.textContent=text;el.className='notice '+type;} }
-  function setNav(k){ $$('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.k===k)); $('#title').textContent=menus.find(x=>x[0]===k)?.[1]||k; render(k); }
-  function buildNav(){ $('#nav').innerHTML=menus.map(([k,t])=>`<button type="button" data-k="${k}">${t}</button>`).join(''); $$('#nav button').forEach(b=>b.addEventListener('click',()=>{setNav(b.dataset.k);$('#app aside').classList.remove('open')})); }
-  function modal(title,body){ const m=$('#modal');m.classList.remove('hidden');m.innerHTML=`<div class="modal-card"><h2>${title}</h2>${body}</div>`; return m; }
-  function closeModal(){ $('#modal').classList.add('hidden');$('#modal').innerHTML=''; }
-  $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
-  $('#menu').addEventListener('click',()=>$('#app aside').classList.toggle('open'));
-  $('#toggle').addEventListener('click',()=>{signup=!signup;$('#authTitle').textContent=signup?'Criar conta':'Entrar no painel';$('#authSubmit').textContent=signup?'Criar conta':'Entrar';$('#toggle').textContent=signup?'Já tenho conta':'Criar minha conta';$('#forgot').classList.toggle('hidden',signup);msg('');});
-  $('#authForm').addEventListener('submit',async e=>{e.preventDefault();if(!sb)return msg('Configure a chave publicável do Supabase no config.js.');const email=$('#email').value.trim(),password=$('#password').value;if(signup){const {data,error}=await sb.auth.signUp({email,password});if(error)return msg(error.message);if(data.session) await finishLogin(data.session); else msg('Conta criada. Verifique seu e-mail para confirmar o acesso.','success');}else{const {data,error}=await sb.auth.signInWithPassword({email,password});if(error)return msg(error.message);await finishLogin(data.session);}});
-  $('#google').addEventListener('click',async()=>{if(!sb)return msg('Configure a chave publicável do Supabase no config.js.');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)msg(error.message);});
-  $('#forgot').addEventListener('click',async()=>{if(!sb)return msg('Configure o Supabase primeiro.');const email=prompt('Digite seu e-mail para receber o link de recuperação:');if(!email)return;const {error}=await sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname});msg(error?error.message:'Se o e-mail existir, enviaremos as instruções de recuperação.','success');});
-  $('#logout').addEventListener('click',async()=>{await sb?.auth.signOut();S.user=null;S.business=null;S.membership=null;$('#app').classList.add('hidden');$('#auth').classList.remove('hidden');});
-  async function finishLogin(session){ if(!session)return; await loadContext(); }
-  async function loadContext(){
-    const {data:{user}}=await sb.auth.getUser(); if(!user)return; S.user=user;
-    const {data:mem,error:me}=await sb.from('memberships').select('*').eq('user_id',user.id).limit(1).maybeSingle();
-    if(me){console.error(me);return msg('Não foi possível carregar sua conta: '+me.message)}
-    if(!mem){return onboarding();}
-    S.membership=mem;S.role=mem.role;
-    const [p,b]=await Promise.all([sb.from('profiles').select('*').eq('id',user.id).maybeSingle(),sb.from('businesses').select('*').eq('id',mem.business_id).maybeSingle()]);
-    if(p.error||b.error){console.error('loadContext',p.error||b.error);return msg('Erro ao carregar os dados da empresa: '+(p.error||b.error).message)}
-    if(!b.data){return msg('Sua conta está sem empresa vinculada. Saia e entre novamente ou conclua o primeiro acesso.')}
-    S.profile=p.data;S.business=b.data;
-    $('#emailTop').textContent=user.email||'';$('#tenant').textContent=S.business.name||'Minha empresa';$('#auth').classList.add('hidden');$('#app').classList.remove('hidden');setNav('dashboard');
+
+  const esc = (v) =>
+    String(v ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;',
+      '<':'&lt;',
+      '>':'&gt;',
+      '"':'&quot;',
+      "'":'&#39;'
+    }[c]));
+
+  const money = (v) =>
+    Number(v || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    });
+
+  const today = () =>
+    new Date().toLocaleDateString('en-CA', {
+      timeZone: 'America/Sao_Paulo'
+    });
+
+  const monthKey = () => {
+    const d = new Date();
+    return {
+      year: Number(
+        new Intl.DateTimeFormat('en', {
+          timeZone: 'America/Sao_Paulo',
+          year: 'numeric'
+        }).format(d)
+      ),
+      month: Number(
+        new Intl.DateTimeFormat('en', {
+          timeZone: 'America/Sao_Paulo',
+          month: 'numeric'
+        }).format(d)
+      )
+    };
+  };
+
+  const dayStart = () => `${today()}T00:00:00`;
+  const dayEnd = () => `${today()}T23:59:59.999`;
+
+  const ready =
+    /^https:\/\/[^\s]+\.supabase\.co$/.test(C.SUPABASE_URL || '') &&
+    !!C.SUPABASE_PUBLISHABLE_KEY &&
+    !String(C.SUPABASE_PUBLISHABLE_KEY).includes('COLE_AQUI');
+
+  const sb = ready
+    ? window.supabase.createClient(
+        C.SUPABASE_URL,
+        C.SUPABASE_PUBLISHABLE_KEY,
+        {
+          auth: {
+            flowType: 'pkce',
+            detectSessionInUrl: true,
+            persistSession: true,
+            autoRefreshToken: true
+          }
+        }
+      )
+    : null;
+
+  const S = {
+    user: null,
+    business: null,
+    profile: null,
+    membership: null,
+    role: null
+  };
+
+  let signup = false;
+
+  const menus = [
+    ['dashboard','Dashboard'],
+    ['agenda','Agenda'],
+    ['clientes','Clientes'],
+    ['servicos','Serviços'],
+    ['profissionais','Profissionais'],
+    ['financeiro','Financeiro'],
+    ['metas','Metas'],
+    ['relatorios','Relatórios'],
+    ['historico','Histórico'],
+    ['configuracoes','Configurações']
+  ];
+
+  function msg(text, type = '') {
+    const el = $('#configWarn');
+    if (el) {
+      el.textContent = text;
+      el.className = 'notice ' + type;
+    }
   }
-  function onboarding(){
-    $('#auth').classList.add('hidden');$('#app').classList.remove('hidden');$('#tenant').textContent='Configuração inicial';$('#emailTop').textContent=S.user?.email||'';
-    $('#content').innerHTML=`<div class="panel"><span class="tag">PRIMEIRO ACESSO</span><h1>Configure sua empresa</h1><p class="muted">Vamos criar sua conta empresarial no ATENDIX. Seus dados ficarão separados dos demais negócios.</p><form id="onboard"><input id="obName" placeholder="Nome da empresa" required><input id="obOwner" placeholder="Nome do responsável" required><input id="obWa" placeholder="WhatsApp"><div class="row"><input id="obOpen" type="time" value="08:00" required><input id="obClose" type="time" value="18:00" required></div><input id="obCap" type="number" min="1" value="20" placeholder="Capacidade diária"><button class="primary" type="submit">Criar minha empresa</button><p id="obMsg" class="notice"></p></form></div>`;
-    $('#onboard').addEventListener('submit',async e=>{e.preventDefault();const payload={p_business_name:$('#obName').value.trim(),p_responsible_name:$('#obOwner').value.trim(),p_whatsapp:$('#obWa').value.trim(),p_opening_time:$('#obOpen').value,p_closing_time:$('#obClose').value,p_daily_capacity:Number($('#obCap').value||20)};const {error}=await sb.rpc('create_business_onboarding',payload);if(error){$('#obMsg').textContent=error.message;return}await loadContext();});
+
+  function setNav(k) {
+    $$('#nav button').forEach(b =>
+      b.classList.toggle('active', b.dataset.k === k)
+    );
+
+    $('#title').textContent =
+      menus.find(x => x[0] === k)?.[1] || k;
+
+    render(k);
   }
-  async function render(k){ const fn={dashboard,agenda,clientes,servicos,profissionais,financeiro,metas,relatorios,historico,configuracoes}[k];if(!fn)return;if(!S.business){$('#content').innerHTML='<div class="panel"><p class="error">A empresa ainda não foi carregada. Aguarde alguns segundos e tente novamente.</p></div>';return}$('#content').innerHTML='<div class="panel"><p class="muted">Carregando...</p></div>';try{$('#content').innerHTML=await fn()}catch(e){console.error(e);$('#content').innerHTML=`<div class="panel"><p class="error">Não foi possível carregar esta área.</p><small>${esc(e.message)}</small></div>`}}
-  function metric(t,v,s){return `<div class="metric"><small>${t}</small><strong>${v}</strong><small>${s}</small></div>`}
-  async function dashboard(){
-    if(!S.business)return '';
-    const d=today();const {data:a=[],error}=await sb.from('appointments').select('status,final_value,customers(name),services(name),start_time').eq('business_id',S.business.id).eq('appointment_date',d).order('start_time');if(error)throw error;
-    const done=a.filter(x=>x.status==='finalizado'),open=a.filter(x=>['agendado','confirmado'].includes(x.status)),rev=done.reduce((n,x)=>n+Number(x.final_value||0),0),next=open[0];
-    const {year,month}=monthKey();const g=(await sb.from('monthly_goals').select('target_value').eq('business_id',S.business.id).eq('year',year).eq('month',month).maybeSingle()).data;const target=Number(g?.target_value||0),pct=target?Math.min(100,rev/target*100):0;
-    const trial=S.business.trial_ends_at?Math.max(0,Math.ceil((new Date(S.business.trial_ends_at)-new Date())/86400000)):null;
-    return `<div class="welcome"><div><small>VISÃO GERAL</small><h1>Olá, ${esc(S.profile?.full_name||S.business.name)} 👋</h1><p class="muted">Acompanhe seus atendimentos de hoje.</p></div><button class="primary" type="button" onclick="window.ATENDIX.newAppt()">+ Novo agendamento</button></div>${trial!==null?`<div class="trial">Teste gratuito: ${trial} dia(s) restante(s).</div>`:''}<div class="metrics">${metric('Faturamento hoje',money(rev),'Somente finalizados')}${metric('Agendamentos',a.length,'Hoje')}${metric('Clientes atendidos',done.length,'Hoje')}${metric('Vagas restantes',Math.max(0,Number(S.business.daily_capacity||0)-open.length),'Capacidade diária')}</div><div class="grid"><div class="panel"><h3>Próximo cliente</h3>${next?`<b>${esc(next.customers?.name||'Cliente')}</b><p class="muted">${esc(next.start_time?.slice(0,5)||'')} · ${esc(next.services?.name||'')}</p>`:`<div class="empty">Nenhum próximo atendimento.</div>`}</div><div class="panel"><h3>Meta mensal</h3><div class="kpi">${money(rev)}</div><p class="muted">Meta: ${money(target)}</p><div class="bar"><i style="width:${pct}%"></i></div><p class="muted">${pct.toFixed(0)}% da meta</p></div></div>`;
+
+  function buildNav() {
+    $('#nav').innerHTML = menus
+      .map(([k, t]) =>
+        `<button type="button" data-k="${k}">${t}</button>`
+      )
+      .join('');
+
+    $$('#nav button').forEach(b => {
+      b.addEventListener('click', () => {
+        setNav(b.dataset.k);
+        $('#app aside').classList.remove('open');
+      });
+    });
   }
-  async function agenda(){const {data:a=[],error}=await sb.from('appointments').select('*,customers(name,whatsapp),services(name,price),professionals(name)').eq('business_id',S.business.id).eq('appointment_date',today()).order('start_time');if(error)throw error;return `<div class="head"><div><h1>Agenda</h1><p class="muted">Atendimentos de hoje</p></div><button class="primary" type="button" onclick="window.ATENDIX.newAppt()">+ Agendar</button></div><div class="panel table"><table><thead><tr><th>Horário</th><th>Cliente</th><th>Serviço</th><th>Profissional</th><th>Status</th><th>Ação</th></tr></thead><tbody>${a.map(x=>`<tr><td>${esc(x.start_time?.slice(0,5))}</td><td>${esc(x.customers?.name)}</td><td>${esc(x.services?.name)}</td><td>${esc(x.professionals?.name||'—')}</td><td><span class="status">${esc(x.status)}</span></td><td><div class="actions">${['agendado','confirmado'].includes(x.status)?`<button class="secondary" type="button" onclick="window.ATENDIX.finish('${x.id}')">Finalizar</button><button class="secondary" type="button" onclick="window.ATENDIX.setStatus('${x.id}','cancelado')">Cancelar</button><button class="secondary" type="button" onclick="window.ATENDIX.setStatus('${x.id}','nao_compareceu')">Não compareceu</button>`:'—'}</div></td></tr>`).join('')||`<tr><td colspan="6"><div class="empty">Nenhum agendamento hoje.</div></td></tr>`}</tbody></table></div>`}
-  async function clientes(){const {data:c=[],error}=await sb.from('customers').select('*').eq('business_id',S.business.id).order('name');if(error)throw error;return `<div class="head"><h1>Clientes</h1><button class="primary" type="button" onclick="window.ATENDIX.newCustomer()">+ Cliente</button></div><div class="panel table"><table><thead><tr><th>Nome</th><th>WhatsApp</th><th>Observações</th></tr></thead><tbody>${c.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.whatsapp||'—')}</td><td>${esc(x.notes||'—')}</td></tr>`).join('')||`<tr><td colspan="3"><div class="empty">Nenhum cliente cadastrado.</div></td></tr>`}</tbody></table></div>`}
-  async function servicos(){const {data:s=[],error}=await sb.from('services').select('*').eq('business_id',S.business.id).order('name');if(error)throw error;return `<div class="head"><h1>Serviços</h1><button class="primary" type="button" onclick="window.ATENDIX.newService()">+ Serviço</button></div>${s.map(x=>`<div class="list"><b>${esc(x.name)}</b><span>${money(x.price)} · ${x.duration_minutes} min · ${x.active?'Ativo':'Inativo'}</span></div>`).join('')||'<div class="empty">Cadastre seu primeiro serviço.</div>'}`}
-  async function profissionais(){const {data:p=[],error}=await sb.from('professionals').select('*').eq('business_id',S.business.id).order('name');if(error)throw error;return `<div class="head"><h1>Profissionais</h1><button class="primary" type="button" onclick="window.ATENDIX.newPro()">+ Profissional</button></div>${p.map(x=>`<div class="list"><b>${esc(x.name)}</b><span>${x.active?'Ativo':'Inativo'}</span></div>`).join('')||'<div class="empty">Cadastre sua equipe.</div>'}`}
-  async function financeiro(){const {year,month}=monthKey();const from=`${year}-${String(month).padStart(2,'0')}-01`;const to=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);const {data:a=[],error}=await sb.from('appointments').select('final_value,completed_at,services(name)').eq('business_id',S.business.id).eq('status','finalizado').gte('appointment_date',from).lte('appointment_date',to);if(error)throw error;const rev=a.reduce((n,x)=>n+Number(x.final_value||0),0),avg=a.length?rev/a.length:0;return `<div class="head"><h1>Financeiro</h1></div><div class="metrics">${metric('Realizado no mês',money(rev),'Serviços finalizados')}${metric('Atendimentos',a.length,'Finalizados')}${metric('Ticket médio',money(avg),'Realizado ÷ atendimentos')}${metric('Não faturado','Agendados','Não entram no realizado')}</div><div class="panel"><h3>Regra financeira</h3><p class="muted">Criar um agendamento não gera receita. O valor só entra no faturamento quando o serviço é marcado como <b>Finalizado</b>.</p></div>`}
-  async function metas(){const {year,month}=monthKey();const {data:g}=await sb.from('monthly_goals').select('*').eq('business_id',S.business.id).eq('year',year).eq('month',month).maybeSingle();return `<div class="head"><div><h1>Metas</h1><p class="muted">Meta mensal atual.</p></div><button class="primary" type="button" onclick="window.ATENDIX.newGoal()">+ Definir meta</button></div><div class="panel"><div class="kpi">${money(g?.target_value||0)}</div><p class="muted">Meta de ${String(month).padStart(2,'0')}/${year}</p></div>`}
-  async function relatorios(){const {data:a=[],error}=await sb.from('appointments').select('status,final_value').eq('business_id',S.business.id);if(error)throw error;const done=a.filter(x=>x.status==='finalizado'),rev=done.reduce((n,x)=>n+Number(x.final_value||0),0);return `<div class="metrics">${metric('Agendamentos',a.length,'Total registrado')}${metric('Atendidos',done.length,'Finalizados')}${metric('Cancelados',a.filter(x=>x.status==='cancelado').length,'Não faturados')}${metric('Ticket médio',money(done.length?rev/done.length:0),'Somente finalizados')}</div>`}
-  async function historico(){const {data:a=[],error}=await sb.from('appointments').select('appointment_date,start_time,status,final_value,customers(name),services(name)').eq('business_id',S.business.id).order('appointment_date',{ascending:false}).order('start_time',{ascending:false}).limit(100);if(error)throw error;return `<div class="head"><h1>Histórico</h1></div><div class="panel table"><table><thead><tr><th>Data</th><th>Horário</th><th>Cliente</th><th>Serviço</th><th>Status</th><th>Valor</th></tr></thead><tbody>${a.map(x=>`<tr><td>${esc(x.appointment_date)}</td><td>${esc(x.start_time?.slice(0,5))}</td><td>${esc(x.customers?.name)}</td><td>${esc(x.services?.name)}</td><td>${esc(x.status)}</td><td>${x.status==='finalizado'?money(x.final_value):'—'}</td></tr>`).join('')||`<tr><td colspan="6"><div class="empty">Nenhum registro.</div></td></tr>`}</tbody></table></div>`}
-  async function configuracoes(){return `<div class="grid"><div class="panel"><h2>Empresa</h2><input id="bn" value="${esc(S.business.name)}" placeholder="Nome da empresa"><input id="bo" value="${esc(S.business.responsible_name)}" placeholder="Responsável"><input id="bw" value="${esc(S.business.whatsapp||'')}" placeholder="WhatsApp"><div class="row"><input id="bopen" type="time" value="${esc(S.business.opening_time||'08:00')}"><input id="bclose" type="time" value="${esc(S.business.closing_time||'18:00')}"></div><input id="bcap" type="number" min="1" value="${Number(S.business.daily_capacity||20)}" placeholder="Capacidade diária"><button class="primary" type="button" onclick="window.ATENDIX.saveBiz()">Salvar</button></div><div class="panel"><h2>Conta</h2><p class="muted">${esc(S.user.email||'')}</p><span class="tag">${esc(S.role||'business_owner')}</span><p class="muted">Os dados da empresa são protegidos por RLS no Supabase.</p></div></div>`}
-  async function saveBiz(){const {error}=await sb.from('businesses').update({name:$('#bn').value.trim(),responsible_name:$('#bo').value.trim(),whatsapp:$('#bw').value.trim(),opening_time:$('#bopen').value,closing_time:$('#bclose').value,daily_capacity:Number($('#bcap').value||20)}).eq('id',S.business.id);if(error)return alert(error.message);Object.assign(S.business,{name:$('#bn').value.trim(),responsible_name:$('#bo').value.trim(),whatsapp:$('#bw').value.trim(),opening_time:$('#bopen').value,closing_time:$('#bclose').value,daily_capacity:Number($('#bcap').value||20)});$('#tenant').textContent=S.business.name;alert('Dados salvos.');}
-  async function newCustomer(){const m=modal('Novo cliente',`<form id="f"><input id="n" placeholder="Nome" required><input id="w" placeholder="WhatsApp"><input id="no" placeholder="Observações"><div class="actions"><button type="button" class="secondary" onclick="window.ATENDIX.closeModal()">Cancelar</button><button class="primary">Salvar</button></div></form>`);$('#f').addEventListener('submit',async e=>{e.preventDefault();const {error}=await sb.from('customers').insert({business_id:S.business.id,name:$('#n').value.trim(),whatsapp:$('#w').value.trim()||null,notes:$('#no').value.trim()||null});if(error)return alert(error.message);closeModal();setNav('clientes');});}
-  async function newService(){modal('Novo serviço',`<form id="f"><input id="n" placeholder="Nome do serviço" required><div class="row"><input id="p" type="number" min="0" step="0.01" placeholder="Preço (R$)" required><input id="d" type="number" min="1" value="30" placeholder="Duração (min)" required></div><div class="actions"><button type="button" class="secondary" onclick="window.ATENDIX.closeModal()">Cancelar</button><button class="primary">Salvar</button></div></form>`);$('#f').addEventListener('submit',async e=>{e.preventDefault();const {error}=await sb.from('services').insert({business_id:S.business.id,name:$('#n').value.trim(),price:Number($('#p').value||0),duration_minutes:Number($('#d').value||30),active:true});if(error)return alert(error.message);closeModal();setNav('servicos');});}
-  async function newPro(){modal('Novo profissional',`<form id="f"><input id="n" placeholder="Nome" required><div class="actions"><button type="button" class="secondary" onclick="window.ATENDIX.closeModal()">Cancelar</button><button class="primary">Salvar</button></div></form>`);$('#f').addEventListener('submit',async e=>{e.preventDefault();const {error}=await sb.from('professionals').insert({business_id:S.business.id,name:$('#n').value.trim(),active:true});if(error)return alert(error.message);closeModal();setNav('profissionais');});}
-  async function newGoal(){const {year,month}=monthKey();modal('Meta mensal',`<form id="f"><input id="v" type="number" min="0" step="0.01" placeholder="Meta em R$" required><div class="actions"><button type="button" class="secondary" onclick="window.ATENDIX.closeModal()">Cancelar</button><button class="primary">Salvar</button></div></form>`);$('#f').addEventListener('submit',async e=>{e.preventDefault();const {error}=await sb.from('monthly_goals').upsert({business_id:S.business.id,year,month,target_value:Number($('#v').value||0)},{onConflict:'business_id,year,month'});if(error)return alert(error.message);closeModal();setNav('metas');});}
-  async function newAppt(){const [cr,sr,pr]=await Promise.all([sb.from('customers').select('id,name').eq('business_id',S.business.id).order('name'),sb.from('services').select('id,name,price,duration_minutes').eq('business_id',S.business.id).eq('active',true).order('name'),sb.from('professionals').select('id,name').eq('business_id',S.business.id).eq('active',true).order('name')]);if(cr.error||sr.error||pr.error)return alert((cr.error||sr.error||pr.error).message);if(!cr.data.length||!sr.data.length)return alert('Cadastre pelo menos um cliente e um serviço antes de agendar.');modal('Novo agendamento',`<form id="f"><label>Cliente<select id="c">${cr.data.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label><label>Serviço<select id="s">${sr.data.map(x=>`<option value="${x.id}">${esc(x.name)} — ${money(x.price)}</option>`).join('')}</select></label><label>Profissional<select id="p"><option value="">Sem profissional</option>${pr.data.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label><div class="row"><input id="d" type="date" value="${today()}" required><input id="t" type="time" value="09:00" required></div><div class="actions"><button type="button" class="secondary" onclick="window.ATENDIX.closeModal()">Cancelar</button><button class="primary">Agendar</button></div></form>`);$('#f').addEventListener('submit',async e=>{e.preventDefault();const {error}=await sb.from('appointments').insert({business_id:S.business.id,customer_id:$('#c').value,service_id:$('#s').value,professional_id:$('#p').value||null,appointment_date:$('#d').value,start_time:$('#t').value,status:'agendado'});if(error)return alert(error.message);closeModal();setNav('agenda');});}
-  async function finish(id){const {data:a,error:e}=await sb.from('appointments').select('service_id,services(price)').eq('id',id).eq('business_id',S.business.id).single();if(e)return alert(e.message);modal('Finalizar serviço',`<form id="f"><p class="muted">O valor abaixo será registrado como faturamento realizado.</p><input id="v" type="number" min="0" step="0.01" value="${Number(a?.services?.price||0)}" required><div class="actions"><button type="button" class="secondary" onclick="window.ATENDIX.closeModal()">Cancelar</button><button class="primary">Finalizar atendimento</button></div></form>`);$('#f').addEventListener('submit',async e=>{e.preventDefault();const {error}=await sb.from('appointments').update({status:'finalizado',completed_at:new Date().toISOString(),final_value:Number($('#v').value||0)}).eq('id',id).eq('business_id',S.business.id);if(error)return alert(error.message);closeModal();setNav('agenda');});}
-  async function setStatus(id,status){const {error}=await sb.from('appointments').update({status}).eq('id',id).eq('business_id',S.business.id);if(error)return alert(error.message);setNav('agenda');}
-  window.ATENDIX={newAppt,newCustomer,newService,newPro,newGoal,finish,setStatus,saveBiz,closeModal};
-  buildNav();
-  if(!ready) msg('Configure a chave publicável do Supabase em config.js antes de testar.');
-  if(sb){sb.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_IN'&&session)loadContext();if(event==='PASSWORD_RECOVERY')msg('Defina sua nova senha.','success');});sb.auth.getSession().then(({data})=>{if(data.session)loadContext();});}
-})();
+
+  function modal(title, body) {
+    const m = $('#modal');
+    m.classList.remove('hidden');
+    m.innerHTML = `
+      <div class="modal-card">
+        <h2>${title}</h2>
+        ${body}
+      </div>
+    `;
+    return m;
+  }
+
+  function closeModal() {
+    $('#modal').classList.add('hidden');
+    $('#modal').innerHTML = '';
+  }
+
+  $('#modal').addEventListener('click', e => {
+    if (e.target.id === 'modal') closeModal();
+  });
+
+  $('#menu').addEventListener('click', () =>
+    $('#app aside').classList.toggle('open')
+  );
+
+  $('#toggle').addEventListener('click', () => {
+    signup = !signup;
+
+    $('#authTitle').textContent =
+      signup ? 'Criar conta' : 'Entrar no painel';
+
+    $('#authSubmit').textContent =
+      signup ? 'Criar conta' : 'Entrar';
+
+    $('#toggle').textContent =
+      signup ? 'Já tenho conta' : 'Criar minha conta';
+
+    $('#forgot').classList.toggle('hidden', signup);
+
+    msg('');
+  });
+
+  $('#authForm').addEventListener('submit', async e => {
+    e.preventDefault();
+
+    if (!sb) {
+      return msg(
+        'Configure a chave publicável do Supabase no config.js.'
+      );
+    }
+
+    const email = $('#email').value.trim();
+    const password = $('#password').value;
+
+    if (signup) {
+      const { data, error } = await sb.auth.signUp({
+        email,
+        password
+      });
+
+      if (error) return msg(error.message);
+
+      if (data.session) {
+        await finishLogin(data.session);
+      } else {
+        msg(
+          'Conta criada. Verifique seu e-mail para confirmar o acesso.',
+          'success'
+        );
+      }
+    } else {
+      const { data, error } =
+        await sb.auth.signInWithPassword({
+          email,
+          password
+        });
+
+      if (error) return msg(error.message);
+
+      await finishLogin(data.session);
+    }
+  });
+
+  $('#google').addEventListener('click', async () => {
+    if (!sb) {
+      return msg(
+        'Configure a chave publicável do Supabase no config.js.'
+      );
+    }
+
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: location.origin + location.pathname
+      }
+    });
+
+    if (error) msg(error.message);
+  });
+
+  $('#forgot').addEventListener('click', async () => {
+    if (!sb) return msg('Configure o Supabase primeiro.');
+
+    const email = prompt(
+      'Digite seu e-mail para receber o link de recuperação:'
+    );
+
+    if (!email) return;
+
+    const { error } =
+      await sb.auth.resetPasswordForEmail(
+        email.trim(),
+        {
+          redirectTo: location.origin + location.pathname
+        }
+      );
+
+    msg(
+      error
+        ? error.message
+        : 'Se o e-mail existir, enviaremos as instruções de recuperação.',
+      error ? '' : 'success'
+    );
+  });
+
+  $('#logout').addEventListener('click', async () => {
+    await sb?.auth.signOut();
+
+    S.user = null;
+    S.business = null;
+    S.membership = null;
+    S.profile = null;
+    S.role = null;
+
+    $('#app').classList.add('hidden');
+    $('#auth').classList.remove('hidden');
+  });
+
+  async function finishLogin(session) {
+    if (!session) return;
+    await loadContext();
+  }
+
+  async function loadContext() {
+    const {
+      data: { user }
+    } = await sb.auth.getUser();
+
+    if (!user) return;
+
+    S.user = user;
+
+    const {
+      data: mem,
+      error: me
+    } = await sb
+      .from('memberships')
+      .select('*')
+      .eq('user_id', user.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (me) {
+      console.error(me);
+      return msg(
+        'Não foi possível carregar sua conta: ' +
+        me.message
+      );
+    }
+
+    if (!mem) {
+      return onboarding();
+    }
+
+    S.membership = mem;
+    S.role = mem.role;
+
+    const [p, b] = await Promise.all([
+      sb
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle(),
+
+      sb
+        .from('businesses')
+        .select('*')
+        .eq('id', mem.business_id)
+        .maybeSingle()
+    ]);
+
+    if (p.error || b.error) {
+      console.error(
+        'loadContext',
+        p.error || b.error
+      );
+
+      return msg(
+        'Erro ao carregar os dados da empresa: ' +
+        (p.error || b.error).message
+      );
+    }
+
+    if (!b.data) {
+      return msg(
+        'Sua conta está sem empresa vinculada. Saia e entre novamente ou conclua o primeiro acesso.'
+      );
+    }
+
+    S.profile = p.data;
+    S.business = b.data;
+
+    $('#emailTop').textContent = user.email || '';
+    $('#tenant').textContent =
+      S.business.name || 'Minha empresa';
+
+    $('#auth').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+
+    setNav('dashboard');
+  }
+
+  function onboarding() {
+    $('#auth').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+
+    $('#tenant').textContent = 'Configuração inicial';
+    $('#emailTop').textContent = S.user?.email || '';
+
+    $('#content').innerHTML = `
+      <div class="panel">
+        <span class="tag">PRIMEIRO ACESSO</span>
+
+        <h1>Configure sua empresa</h1>
+
+        <p class="muted">
+          Vamos criar sua conta empresarial no ATENDIX.
+          Seus dados ficarão separados dos demais negócios.
+        </p>
+
+        <form id="onboard">
+
+          <input
+            id="obName"
+            placeholder="Nome da empresa"
+            required
+          >
+
+          <input
+            id="obOwner"
+            placeholder="Nome do responsável"
+            required
+          >
+
+          <input
+            id="obWa"
+            placeholder="WhatsApp"
+          >
+
+          <div class="row">
+            <input
+              id="obOpen"
+              type="time"
+              value="08:00"
+              required
+            >
+
+            <input
+              id="obClose"
+              type="time"
+              value="18:00"
+              required
+            >
+          </div>
+
+          <input
+            id="obCap"
+            type="number"
+            min="1"
+            value="20"
+            placeholder="Capacidade diária"
+          >
+
+          <button
+            class="primary"
+            type="submit"
+          >
+            Criar minha empresa
+          </button>
+
+          <p id="obMsg" class="notice"></p>
+
+        </form>
+      </div>
+    `;
+
+    $('#onboard').addEventListener(
+      'submit',
+      async e => {
+        e.preventDefault();
+
+        const button =
+          $('#onboard button[type="submit"]');
+
+        button.disabled = true;
+        button.textContent = 'Criando empresa...';
+
+        const payload = {
+          p_business_name:
+            $('#obName').value.trim(),
+
+          p_responsible_name:
+            $('#obOwner').value.trim(),
+
+          p_whatsapp:
+            $('#obWa').value.trim(),
+
+          p_opening_time:
+            $('#obOpen').value,
+
+          p_closing_time:
+            $('#obClose').value,
+
+          p_daily_capacity:
+            Number($('#obCap').value || 20)
+        };
+
+        const { error } =
+          await sb.rpc(
+            'create_business_onboarding',
+            payload
+          );
+
+        if (error) {
+          console.error(
+            'create_business_onboarding',
+            error
+          );
+
+          $('#obMsg').textContent =
+            error.message;
+
+          button.disabled = false;
+          button.textContent =
+            'Criar minha empresa';
+
+          return;
+        }
+
+        $('#obMsg').textContent =
+          'Empresa criada! Carregando seu painel...';
+
+        await new Promise(resolve =>
+          setTimeout(resolve, 500)
+        );
+
+        await loadContext();
+
+        button.disabled = false;
+        button.textContent =
+          'Criar minha empresa';
+      }
+    );
+  }
+
+  async function render(k) {
+    const fn = {
+      dashboard,
+      agenda,
+      clientes,
+      servicos,
+      profissionais,
+      financeiro,
+      metas,
+      relatorios,
+      historico,
+      configuracoes
+    }[k];
+
+    if (!fn) return;
+
+    if (!S.business) {
+      $('#content').innerHTML = `
+        <div class="panel">
+          <p class="error">
+            A empresa ainda não foi carregada.
+            Aguarde alguns segundos e tente novamente.
+          </p>
+        </div>
+      `;
+
+      return;
+    }
+
+    $('#content').innerHTML = `
+      <div class="panel">
+        <p class="muted">Carregando...</p>
+      </div>
+    `;
+
+    try {
+      $('#content').innerHTML = await fn();
+    } catch (e) {
+      console.error(e);
+
+      $('#content').innerHTML = `
+        <div class="panel">
+          <p class="error">
+            Não foi possível carregar esta área.
+          </p>
+          <small>${esc(e.message)}</small>
+        </div>
+      `;
+    }
+  }
+
+  function metric(t, v, s) {
+    return `
+      <div class="metric">
+        <small>${t}</small>
+        <strong>${v}</strong>
+        <small>${s}</small>
+      </div>
+    `;
+  }
+
+  async function dashboard() {
+    if (!S.business) return '';
+
+    const { data: a = [], error } =
+      await sb
+        .from('appointments')
+        .select(`
+          id,
+          status,
+          value,
+          scheduled_at,
+          customers(name),
+          services(name)
+        `)
+        .eq('business_id', S.business.id)
+        .gte('scheduled_at', dayStart())
+        .lte('scheduled_at', dayEnd())
+        .order('scheduled_at');
+
+    if (error) throw error;
+
+    const done =
+      a.filter(x => x.status === 'finalizado');
+
+    const open =
+      a.filter(x =>
+        ['agendado', 'confirmado']
+          .includes(x.status)
+      );
+
+    const rev =
+      done.reduce(
+        (n, x) => n + Number(x.value || 0),
+        0
+      );
+
+    const next = open[0];
+
+    const { year, month } = monthKey();
+
+    const g =
+      (
+        await sb
+          .from('monthly_goals')
+          .select('target_value')
+          .eq('business_id', S.business.id)
+          .eq('year', year)
+          .eq('month', month)
+          .maybeSingle()
+      ).data;
+
+    const target =
+      Number(g?.target_value || 0);
+
+    const pct =
+      target
+        ? Math.min(100, rev / target * 100)
+        : 0;
+
+    const trial =
+      S.business.trial_ends_at
+        ? Math.max(
+            0,
+            Math.ceil(
+              (
+                new Date(
+                  S.business.trial_ends_at
+                ) - new Date()
+              ) / 86400000
+            )
+          )
+        : null;
+
+    const nextTime = next?.scheduled_at
+      ? new Date(
+          next.scheduled_at
+        ).toLocaleTimeString(
+          'pt-BR',
+          {
+            hour: '2-digit',
+            minute: '2-digit'
+          }
+        )
+      : '';
+
+    return `
+      <div class="welcome">
+        <div>
+          <small>VISÃO GERAL</small>
+
+          <h1>
+            Olá,
+            ${esc(
+              S.profile?.full_name ||
+              S.business.name
+            )}
+            👋
+          </h1>
+
+          <p class="muted">
+            Acompanhe seus atendimentos de hoje.
+          </p>
+        </div>
+
+        <button
+          class="primary"
+          type="button"
+          onclick="window.ATENDIX.newAppt()"
+        >
+          + Novo agendamento
+        </button>
+      </div>
+
+      ${
+        trial !== null
+          ? `
+            <div class="trial">
+              Teste gratuito:
+              ${trial} dia(s) restante(s).
+            </div>
+          `
+          : ''
+      }
+
+      <div class="metrics">
+
+        ${metric(
+          'Faturamento hoje',
+          money(rev),
+          'Somente finalizados'
+        )}
+
+        ${metric(
+          'Agendamentos',
+          a.length,
+          'Hoje'
+        )}
+
+        ${metric(
+          'Clientes atendidos',
+          done.length,
+          'Hoje'
+        )}
+
+        ${metric(
+          'Vagas restantes',
+          Math.max(
+            0,
+            Number(
+              S.business.daily_capacity || 0
+            ) - open.length
+          ),
+          'Capacidade diária'
+        )}
+
+      </div>
+
+      <div class="grid">
+
+        <div class="panel">
+          <h3>Próximo cliente</h3>
+
+          ${
+            next
+              ? `
+                <b>
+                  ${esc(
+                    next.customers?.name ||
+                    'Cliente'
+                  )}
+                </b>
+
+                <p class="muted">
+                  ${esc(nextTime)}
+                  ·
+                  ${esc(
+                    next.services?.name || ''
+                  )}
+                </p>
+              `
+              : `
+                <div class="empty">
+                  Nenhum próximo atendimento.
+                </div>
+              `
+          }
+        </div>
+
+        <div class="panel">
+
+          <h3>Meta mensal</h3>
+
+          <div class="kpi">
+            ${money(rev)}
+          </div>
+
+          <p class="muted">
+            Meta
